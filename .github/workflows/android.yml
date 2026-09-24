@@ -1,0 +1,47 @@
+name: Android APK
+
+on:
+  push:
+    paths: ['index.html', 'app.css', 'manifest.json', 'icons/**', 'vendor/**', 'android/**', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['index.html', 'app.css', 'manifest.json', 'icons/**', 'vendor/**', 'android/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The Ubuntu runner ships the Android SDK (ANDROID_HOME); Gradle fetches any missing platform.
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk ../flytteprotokoll.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flytteprotokoll-apk
+          path: flytteprotokoll.apk
+
+      # Each build on the default branch becomes a GitHub Release, so the newest APK is always at
+      # https://github.com/<owner>/<repo>/releases/latest/download/flytteprotokoll.apk
+      - name: Publish release
+        if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v2.0.${{ github.run_number }}" flytteprotokoll.apk \
+            --title "Flytteprotokoll 2.0.${{ github.run_number }}" \
+            --notes "Android-bygg av commit ${{ github.sha }}. Last ned flytteprotokoll.apk og åpne filen på telefonen for å installere eller oppdatere."

@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#002664">
+    <title>Flytteprotokoll</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icons/icon-192.png">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="app.css">
+    <script src="vendor/signature_pad.min.js"></script>
+    <script src="vendor/jspdf.min.js"></script>
+    <script src="vendor/jspdf.autotable.min.js"></script>
+    <script src="vendor/alpine-collapse.min.js" defer></script>
+    <script src="vendor/alpine.min.js" defer></script>
+    <style>
+        body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; color: #1e293b; -webkit-tap-highlight-color: transparent; }
+        .card { background: #fff; border-radius: 20px; border: 1px solid #e2e8f0; box-shadow: 0 4px 6px -1px rgba(0,0,0,.05); }
+        .field { width: 100%; padding: .75rem; background: #f8fafc; border-radius: .75rem; box-shadow: inset 0 0 0 1px #e2e8f0; outline: none; }
+        .field:focus { box-shadow: inset 0 0 0 2px #002664; }
+        .lbl { display: block; font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 .25rem .25rem; }
+        .h2 { font-size: 11px; font-weight: 900; color: #002664; text-transform: uppercase; letter-spacing: .1em; }
+        .ok { background: #002664 !important; color: #fff !important; }
+        .feil { background: #be123c !important; color: #fff !important; }
+        canvas.sig { border: 1px solid #cbd5e1; background: #fff; border-radius: 12px; width: 100%; height: 180px; touch-action: none; }
+        input, select, textarea { font-size: 16px !important; }
+        [x-cloak] { display: none !important; }
+        .safe-top { padding-top: env(safe-area-inset-top); }
+    </style>
+</head>
+<body x-data="app()" x-init="start()">
+
+<!-- PIN -->
+<div x-show="locked" x-cloak class="fixed inset-0 z-[100] flex items-center justify-center bg-[#002664] px-6">
+    <div class="bg-white p-10 rounded-[35px] shadow-2xl w-full max-w-xs text-center">
+        <h2 class="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-8">Flytteprotokoll</h2>
+        <input type="password" inputmode="numeric" x-model="pinInput" @keyup.enter="unlock" x-ref="pin"
+               class="w-full text-center text-3xl border-b-2 border-gray-100 py-2 mb-8 outline-none focus:border-blue-900" placeholder="••••" maxlength="8">
+        <button @click="unlock" class="bg-[#002664] text-white px-8 py-3 rounded-full font-bold text-xs uppercase tracking-widest">Lås opp</button>
+    </div>
+</div>
+
+<!-- Toast -->
+<div x-show="toastMsg" x-cloak x-transition.opacity
+     class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[90] bg-gray-900 text-white text-sm font-semibold px-5 py-3 rounded-full shadow-xl" x-text="toastMsg"></div>
+
+<div x-show="!locked" x-cloak class="max-w-xl mx-auto min-h-screen pb-24 px-4 safe-top">
+
+    <!-- ============ LISTE ============ -->
+    <div x-show="view === 'list'">
+        <header class="mt-6 mb-6 bg-white p-6 rounded-[25px] border border-gray-200 shadow-sm text-center relative">
+            <button @click="view = 'settings'" class="absolute top-4 right-4 text-gray-400 text-xl p-1" aria-label="Innstillinger">⚙</button>
+            <img x-show="settings.logo" :src="settings.logo" alt="" class="h-12 mx-auto mb-3 object-contain">
+            <h1 class="text-xl font-black text-gray-900 uppercase leading-none tracking-tight">Flytteprotokoll</h1>
+            <p class="text-[10px] text-gray-500 font-bold uppercase mt-2 tracking-widest" x-text="orgLine()"></p>
+        </header>
+
+        <div class="grid grid-cols-2 gap-3 mb-6">
+            <button @click="newProtocol('Innflytting')" class="bg-[#002664] text-white py-4 rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg active:scale-[0.98]">+ Innflytting</button>
+            <button @click="newProtocol('Utflytting')" class="bg-white text-[#002664] border-2 border-[#002664] py-4 rounded-2xl font-black text-xs uppercase tracking-wider active:scale-[0.98]">+ Utflytting</button>
+        </div>
+
+        <button x-show="!settings.navn" @click="view = 'settings'" class="w-full mb-4 text-left text-xs text-amber-800 bg-amber-50 rounded-xl p-3">
+            Første gang? Trykk her og fyll inn navn og enhet under Innstillinger. De brukes i PDF-en.
+        </button>
+
+        <input x-show="list.length > 3" type="search" x-model="search" placeholder="Søk adresse eller navn…" class="field mb-4">
+
+        <p x-show="list.length === 0" class="text-center text-sm text-gray-400 py-10">Ingen protokoller ennå. Start en ny over.</p>
+
+        <div class="space-y-3">
+            <template x-for="m in filteredList()" :key="m.id">
+                <div class="card p-4">
+                    <div @click="openProtocol(m.id)" class="cursor-pointer">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="font-black text-sm text-gray-800 truncate" x-text="m.adresse || 'Uten adresse'"></span>
+                            <span class="text-[9px] font-black uppercase px-2 py-1 rounded-full shrink-0"
+                                  :class="m.type === 'Innflytting' ? 'bg-blue-50 text-blue-900' : 'bg-amber-50 text-amber-700'" x-text="m.type"></span>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-1" x-text="(m.leietaker || 'Ukjent leietaker') + ' • ' + fmtDate(m.dato)"></div>
+                        <div class="text-[10px] mt-1 font-bold" :class="m.pdf ? 'text-green-700' : 'text-gray-400'"
+                             x-text="m.pdf ? 'PDF laget ' + fmtDateTime(m.pdf) : 'Utkast • endret ' + fmtDateTime(m.updated)"></div>
+                    </div>
+                    <div class="flex gap-4 mt-3 pt-3 border-t border-gray-100 text-[10px] font-bold uppercase">
+                        <button @click="openProtocol(m.id)" class="text-blue-900">Åpne</button>
+                        <button x-show="m.type === 'Innflytting'" @click="startUtflytting(m.id)" class="text-amber-700">Start utflytting</button>
+                        <button @click="deleteProtocol(m.id)" class="text-red-400 ml-auto">Slett</button>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <footer class="mt-10 text-center text-[9px] text-gray-300 uppercase tracking-[0.3em]">Utviklet av Ivan St.</footer>
+    </div>
+
+    <!-- ============ OPPSTART ============ -->
+    <div x-show="view === 'setup'" class="pt-8">
+        <div class="text-center mb-6">
+            <img src="icons/icon-192.png" alt="" class="h-16 w-16 mx-auto rounded-2xl mb-3">
+            <h1 class="text-xl font-black text-gray-900 uppercase tracking-tight">Flytteprotokoll</h1>
+            <p x-show="setupStep > 0" class="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-2" x-text="'Steg ' + setupStep + ' av 3'"></p>
+        </div>
+
+        <section x-show="setupStep === 0" class="card p-6 space-y-4">
+            <h2 class="h2 border-b pb-2">Velkommen</h2>
+            <p class="text-sm text-gray-600">Sett opp appen på et par minutter. Alt er valgfritt og kan endres senere under ⚙ Innstillinger. Opplysningene lagres bare på denne enheten.</p>
+            <button @click="setupStep = 1" class="w-full bg-[#002664] text-white py-4 rounded-2xl font-black text-xs uppercase tracking-wider">Start oppsett</button>
+            <label class="block w-full bg-gray-100 py-4 rounded-2xl font-bold text-xs uppercase tracking-wider text-gray-700 text-center cursor-pointer">
+                Hent fra sikkerhetskopi<input type="file" accept=".json,application/json" class="hidden" @change="importBackup($event, true)">
+            </label>
+            <button @click="finishSetup" class="w-full text-xs text-gray-400 font-bold underline">Hopp over</button>
+        </section>
+
+        <section x-show="setupStep === 1" class="card p-6 space-y-4">
+            <h2 class="h2 border-b pb-2">Om deg</h2>
+            <p class="text-xs text-gray-500">Brukes i PDF-en under signaturen. Fyll inn det du vil.</p>
+            <div><label class="lbl">Navn</label><input type="text" x-model="settings.navn" class="field" placeholder="Fornavn Etternavn"></div>
+            <div><label class="lbl">Tittel</label><input type="text" x-model="settings.tittel" class="field"></div>
+            <div class="grid grid-cols-2 gap-3">
+                <div><label class="lbl">Enhet</label><input type="text" x-model="settings.enhet" class="field" placeholder="F.eks. Bydel …"></div>
+                <div><label class="lbl">Kommune</label><input type="text" x-model="settings.kommune" class="field" placeholder="F.eks. … kommune"></div>
+            </div>
+        </section>
+
+        <section x-show="setupStep === 2" class="card p-6 space-y-4">
+            <h2 class="h2 border-b pb-2">Faste adresser</h2>
+            <p class="text-xs text-gray-500">Adressene du jobber mest på. De vises som knapper i hver ny protokoll, så du bare skriver leilighetsnummeret.</p>
+            <template x-for="(a, i) in settings.adresser" :key="a">
+                <div class="flex items-center gap-3 border-b border-gray-100 pb-2">
+                    <span class="flex-1 text-sm font-bold text-gray-700" x-text="a"></span>
+                    <button @click="settings.adresser.splice(i, 1)" class="text-gray-300 text-lg leading-none">×</button>
+                </div>
+            </template>
+            <div class="flex gap-3">
+                <input type="text" x-model="newAdresse" @keyup.enter="addAdresse" placeholder="Gate nr, postnr sted" class="field flex-1 text-sm">
+                <button @click="addAdresse" class="bg-[#002664] text-white px-4 rounded-xl text-xs font-bold">Legg til</button>
+            </div>
+        </section>
+
+        <section x-show="setupStep === 3" class="card p-6 space-y-4">
+            <h2 class="h2 border-b pb-2">Logo og PIN</h2>
+            <p class="text-xs text-gray-500">Logoen vises øverst i appen og i PDF-en.</p>
+            <img x-show="settings.logo" :src="settings.logo" alt="" class="h-16 object-contain">
+            <div class="flex gap-3 items-center">
+                <label class="bg-gray-100 px-4 py-2 rounded-lg cursor-pointer text-xs font-bold text-gray-600">
+                    Velg logo…<input type="file" accept="image/*" class="hidden" @change="setLogo($event)">
+                </label>
+                <button x-show="settings.logo" @click="settings.logo = ''" class="text-xs text-red-500 font-bold underline">Fjern</button>
+            </div>
+            <p class="text-xs text-gray-500 pt-2 border-t">PIN låser appen ved oppstart. La feltet stå tomt hvis du ikke vil ha PIN.</p>
+            <input type="password" inputmode="numeric" x-model="newPin" placeholder="PIN (4–8 siffer)" maxlength="8" class="field">
+        </section>
+
+        <div x-show="setupStep > 0" class="flex gap-3 mt-4">
+            <button @click="setupStep--" class="flex-1 bg-white border py-4 rounded-2xl font-bold text-xs uppercase text-gray-500">Tilbake</button>
+            <button x-show="setupStep < 3" @click="setupStep++" class="flex-[2] bg-[#002664] text-white py-4 rounded-2xl font-black text-xs uppercase tracking-wider">Neste</button>
+            <button x-show="setupStep === 3" @click="finishSetup" class="flex-[2] bg-[#002664] text-white py-4 rounded-2xl font-black text-xs uppercase tracking-wider">Ferdig</button>
+        </div>
+    </div>
+
+    <!-- ============ INNSTILLINGER ============ -->
+    <div x-show="view === 'settings'">
+        <div class="sticky top-0 z-20 bg-[#f1f5f9] py-4 flex items-center gap-3">
+            <button @click="saveSettings(); view = 'list'" class="text-blue-900 font-bold text-sm">‹ Tilbake</button>
+            <span class="font-black uppercase text-xs text-gray-700">Innstillinger</span>
+        </div>
+
+        <section class="card p-6 mb-4 space-y-4">
+            <h2 class="h2 border-b pb-2">Boligforvalter</h2>
+            <div><label class="lbl">Navn</label><input type="text" x-model="settings.navn" @change="saveSettings" class="field"></div>
+            <div><label class="lbl">Tittel</label><input type="text" x-model="settings.tittel" @change="saveSettings" class="field"></div>
+            <div class="grid grid-cols-2 gap-3">
+                <div><label class="lbl">Enhet</label><input type="text" x-model="settings.enhet" @change="saveSettings" class="field" placeholder="F.eks. Bydel …"></div>
+                <div><label class="lbl">Kommune</label><input type="text" x-model="settings.kommune" @change="saveSettings" class="field" placeholder="F.eks. … kommune"></div>
+            </div>
+        </section>
+
+        <section class="card p-6 mb-4 space-y-4">
+            <h2 class="h2 border-b pb-2">Faste adresser</h2>
+            <p class="text-xs text-gray-500">Adressene vises som knapper i nye protokoller. Velg én og skriv bare leilighetsnummeret.</p>
+            <template x-for="(a, i) in settings.adresser" :key="a">
+                <div class="flex items-center gap-3 border-b border-gray-100 pb-2">
+                    <span class="flex-1 text-sm font-bold text-gray-700" x-text="a"></span>
+                    <button @click="settings.adresser.splice(i, 1); saveSettings()" class="text-gray-300 text-lg leading-none">×</button>
+                </div>
+            </template>
+            <div class="flex gap-3">
+                <input type="text" x-model="newAdresse" @keyup.enter="addAdresse" placeholder="F.eks. Trondheimsveien 100, 0565 Oslo" class="field flex-1 text-sm">
+                <button @click="addAdresse" class="bg-[#002664] text-white px-4 rounded-xl text-xs font-bold">Legg til</button>
+            </div>
+        </section>
+
+        <section class="card p-6 mb-4 space-y-4">
+            <h2 class="h2 border-b pb-2">Logo (vises i appen og i PDF)</h2>
+            <img x-show="settings.logo" :src="settings.logo" alt="" class="h-16 object-contain">
+            <div class="flex gap-3 items-center">
+                <label class="bg-gray-100 px-4 py-2 rounded-lg cursor-pointer text-xs font-bold text-gray-600">
+                    Velg bilde…<input type="file" accept="image/*" class="hidden" @change="setLogo($event)">
+                </label>
+                <button x-show="settings.logo" @click="settings.logo = ''; saveSettings()" class="text-xs text-red-500 font-bold underline">Fjern</button>
+            </div>
+        </section>
+
+        <section class="card p-6 mb-4 space-y-4">
+            <h2 class="h2 border-b pb-2">PIN-kode</h2>
+            <p class="text-xs text-gray-500">Appen spør om PIN ved oppstart og etter 5 minutter i bakgrunnen. Protokollene lagres bare på denne enheten.</p>
+            <p class="text-xs font-bold" :class="settings.pinHash ? 'text-green-700' : 'text-gray-400'" x-text="settings.pinHash ? 'PIN er på' : 'PIN er av'"></p>
+            <div class="flex gap-3">
+                <input type="password" inputmode="numeric" x-model="newPin" placeholder="Ny PIN (4–8 siffer)" maxlength="8" class="field flex-1">
+                <button @click="setPin" class="bg-[#002664] text-white px-4 rounded-xl text-xs font-bold">Lagre</button>
+            </div>
+            <button x-show="settings.pinHash" @click="settings.pinHash = ''; saveSettings(); toast('PIN er slått av')" class="text-xs text-red-500 font-bold underline">Slå av PIN</button>
+        </section>
+
+        <section class="card p-6 mb-4 space-y-4">
+            <h2 class="h2 border-b pb-2">Erklæringstekst</h2>
+            <div><label class="lbl">Innflytting</label><textarea x-model="settings.tekstInn" @change="saveSettings" rows="4" class="field text-sm"></textarea></div>
+            <div><label class="lbl">Utflytting</label>
+                <p class="text-[10px] text-gray-400 ml-1 mb-1">Setningen om nøkler legges til automatisk foran, ut fra punkt 02.</p>
+                <textarea x-model="settings.tekstUt" @change="saveSettings" rows="4" class="field text-sm"></textarea></div>
+            <button @click="resetTexts" class="text-xs text-gray-500 font-bold underline">Tilbakestill tekstene</button>
+        </section>
+
+        <section class="card p-6 mb-4 space-y-4">
+            <h2 class="h2 border-b pb-2">Sikkerhetskopi</h2>
+            <p class="text-xs text-gray-500">Nettleseren og Android-appen lagrer hver for seg. Bruk sikkerhetskopi for å flytte data mellom dem, til en ny telefon, eller for å gi en kollega de samme innstillingene. PIN-koden tas aldri med.</p>
+            <div class="grid grid-cols-2 gap-3">
+                <button @click="exportBackup(true)" class="bg-gray-100 py-3 rounded-xl text-xs font-bold text-gray-700">Eksporter alt</button>
+                <button @click="exportBackup(false)" class="bg-gray-100 py-3 rounded-xl text-xs font-bold text-gray-700">Bare innstillinger</button>
+            </div>
+            <label class="block bg-gray-100 py-3 rounded-xl text-xs font-bold text-gray-700 text-center cursor-pointer">
+                Importer fra fil<input type="file" accept=".json,application/json" class="hidden" @change="importBackup($event)">
+            </label>
+            <button @click="setupStep = 0; view = 'setup'" class="text-xs text-gray-500 font-bold underline">Kjør oppstartsveiviseren på nytt</button>
+        </section>
+
+        <section class="card p-6 mb-4 space-y-2 text-xs text-gray-500">
+            <h2 class="h2 border-b pb-2">Om appen</h2>
+            <p x-text="'Versjon ' + appVersion()"></p>
+            <p class="font-bold text-gray-700">Utviklet av Ivan St.</p>
+            <p class="text-[10px] text-gray-400">Bygget med Alpine.js, jsPDF, jsPDF-AutoTable, Signature Pad og Tailwind CSS (MIT-lisens).</p>
+            <button x-show="isAndroid" @click="window.FlytteAndroid.checkForUpdate()" class="text-blue-900 font-bold underline">Se etter oppdatering</button>
+        </section>
+    </div>
+
+    <!-- ============ PROTOKOLL ============ -->
+    <div x-show="view === 'edit' && p" @input.debounce.600ms="queueSave()" @change="queueSave()" @click="queueSave()">
+        <template x-if="p">
+        <div>
+        <div class="sticky top-0 z-20 bg-[#f1f5f9] py-4 flex items-center gap-3">
+            <button @click="closeProtocol" class="text-blue-900 font-bold text-sm">‹ Protokoller</button>
+            <span class="font-black uppercase text-xs text-gray-700 truncate flex-1 text-center" x-text="p.type"></span>
+            <span class="text-[10px] font-bold w-16 text-right" :class="saveState === 'saved' ? 'text-green-700' : 'text-gray-400'"
+                  x-text="saveState === 'saved' ? '✓ Lagret' : 'Lagrer…'"></span>
+        </div>
+
+        <!-- 01. Detaljer -->
+        <section class="card p-6 mb-4 space-y-4">
+            <h2 class="h2 border-b pb-2">01. Detaljer</h2>
+            <div class="grid grid-cols-2 gap-3">
+                <div><label class="lbl">Dato</label><input type="date" x-model="p.dato" class="field text-sm h-12"></div>
+                <div><label class="lbl">Rapporttype</label>
+                    <select x-model="p.type" class="field text-sm font-bold h-12">
+                        <option value="Innflytting">Innflytting</option>
+                        <option value="Utflytting">Utflytting</option>
+                    </select></div>
+            </div>
+            <div>
+                <label class="lbl">Adresse</label>
+                <div x-show="settings.adresser.length" class="flex flex-wrap gap-2 mb-2">
+                    <template x-for="a in settings.adresser" :key="a">
+                        <button @click="p.adresse = a; $nextTick(() => $refs.leilnr.focus())"
+                                :class="p.adresse === a ? 'ok' : 'bg-gray-50 text-gray-600 ring-1 ring-gray-200'"
+                                class="px-3 py-2 rounded-xl text-xs font-bold text-left" x-text="a"></button>
+                    </template>
+                </div>
+                <input type="text" x-model="p.adresse" :placeholder="settings.adresser.length ? 'Eller skriv annen adresse' : 'Gate, nr, postnr'" class="field text-sm">
+            </div>
+            <div><label class="lbl">Leilighetsnr. / bolignr.</label><input type="text" x-model="p.leilnr" x-ref="leilnr" placeholder="F.eks. H0203" class="field text-sm"></div>
+            <div><label class="lbl">Leietaker</label><input type="text" x-model="p.leietaker" placeholder="Fullt navn" class="field text-sm"></div>
+            <label class="flex items-center gap-2 ml-1">
+                <input type="checkbox" x-model="p.fullmakt" class="w-5 h-5">
+                <span class="text-xs font-bold text-gray-600">Leietaker møter ikke selv (fullmakt)</span>
+            </label>
+            <div x-show="p.fullmakt"><label class="lbl">Fullmektig</label><input type="text" x-model="p.fullmektig" placeholder="Navn på den som møter" class="field text-sm"></div>
+            <div class="grid grid-cols-2 gap-3">
+                <div><label class="lbl">Strømstand (kWh)</label><input type="text" inputmode="decimal" x-model="p.strom" class="field text-sm"></div>
+                <div><label class="lbl">Målernummer</label><input type="text" inputmode="numeric" x-model="p.maler" class="field text-sm"></div>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+                <label class="bg-gray-100 px-4 py-2 rounded-lg cursor-pointer text-[10px] font-bold text-gray-600">
+                    📸 Bilde av strømmåler<input type="file" accept="image/*" capture="environment" class="hidden" @change="addPhotos($event, p.malerFoto)">
+                </label>
+                <template x-for="(ph, i) in p.malerFoto" :key="ph.id">
+                    <div class="relative"><img :src="ph.data" class="h-12 w-12 object-cover rounded-lg">
+                        <button @click="p.malerFoto.splice(i,1)" class="absolute -top-2 -right-2 bg-white border rounded-full w-5 h-5 text-[10px] text-red-500">×</button></div>
+                </template>
+            </div>
+        </section>
+
+        <!-- 02. Nøkler -->
+        <section class="card p-6 mb-4">
+            <h2 class="h2 border-b pb-2 mb-4">02. Nøkkeloversikt</h2>
+            <div class="grid gap-2 text-[9px] font-bold text-gray-400 uppercase mb-2"
+                 :class="p.type === 'Utflytting' ? 'grid-cols-[1fr_3rem_3rem_4.5rem_1rem]' : 'grid-cols-[1fr_4rem_1rem]'">
+                <span>Type</span>
+                <span class="text-center" x-text="p.type === 'Utflytting' ? 'Levert' : 'Antall'"></span>
+                <span x-show="p.type === 'Utflytting'" class="text-center">Mangler</span>
+                <span x-show="p.type === 'Utflytting'" class="text-center">Kr</span>
+                <span></span>
+            </div>
+            <template x-for="(k, kIdx) in p.keys" :key="k.id">
+                <div class="mb-3">
+                    <div class="grid gap-2 items-center"
+                         :class="p.type === 'Utflytting' ? 'grid-cols-[1fr_3rem_3rem_4.5rem_1rem]' : 'grid-cols-[1fr_4rem_1rem]'">
+                        <input type="text" x-model="k.navn" class="text-xs font-bold text-gray-600 bg-transparent border-b border-gray-100 outline-none py-1 min-w-0">
+                        <input type="number" inputmode="numeric" min="0" x-model="k.antall" class="text-center font-bold border-b-2 border-gray-200 outline-none min-w-0" placeholder="0">
+                        <input x-show="p.type === 'Utflytting'" type="number" inputmode="numeric" min="0" x-model="k.mangler" class="text-center font-bold border-b-2 border-red-200 text-red-700 outline-none min-w-0" placeholder="0">
+                        <input x-show="p.type === 'Utflytting'" type="number" inputmode="numeric" min="0" x-model="k.pris" class="text-center font-bold bg-yellow-50 rounded outline-none min-w-0" placeholder="0">
+                        <button @click="p.keys.splice(kIdx, 1)" class="text-gray-300 text-lg leading-none">×</button>
+                    </div>
+                    <div x-show="k.prev" class="text-[10px] text-gray-400 mt-1" x-text="'Ved innflytting: ' + k.prev"></div>
+                </div>
+            </template>
+            <button @click="p.keys.push(mkKey(''))" class="text-[10px] font-bold text-gray-400 uppercase border border-dashed rounded-lg px-3 py-1.5">+ Nøkkeltype</button>
+        </section>
+
+        <!-- 03. Rom -->
+        <div class="flex items-center justify-between mx-2 mb-3 mt-6">
+            <h2 class="h2">03. Rom og utstyr</h2>
+            <button x-show="stats().checked < stats().items" @click="restOk" class="text-[10px] font-black uppercase text-blue-900 bg-white border border-blue-900 rounded-lg px-3 py-1.5">Resten OK</button>
+        </div>
+        <template x-for="(room, rIdx) in p.rooms" :key="room.id">
+            <div x-show="!room.onlyUt || p.type === 'Utflytting'" class="card overflow-hidden mb-3">
+                <div @click="toggleRoom(rIdx)" class="p-5 flex justify-between items-center cursor-pointer">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <div class="w-1.5 h-5 rounded-full shrink-0" :class="roomHasFeil(room) ? 'bg-red-600' : (roomDone(room) ? 'bg-green-600' : 'bg-blue-900')"></div>
+                        <span class="font-black text-gray-700 uppercase text-[11px] truncate" x-text="roomLabel(room)"></span>
+                        <span class="text-[10px] text-gray-400 font-bold shrink-0" x-text="roomProgress(room)"></span>
+                    </div>
+                    <span x-text="room.open ? '−' : '+'" class="text-xl text-gray-300 font-light"></span>
+                </div>
+
+                <div x-show="room.open" x-collapse>
+                <div class="p-5 space-y-6 bg-gray-50/40 border-t">
+                    <div class="flex gap-4 text-[10px] font-bold uppercase">
+                        <button @click="setAllOk(room)" class="text-blue-900">Alt OK</button>
+                        <button @click="renameRoom(room)" class="text-gray-400">Gi nytt navn</button>
+                        <button @click="removeRoom(rIdx)" class="text-red-300 ml-auto">Fjern rom</button>
+                    </div>
+
+                    <template x-for="(item, iIdx) in room.items" :key="item.id">
+                        <div class="border-b border-gray-200 last:border-0 pb-4">
+                            <div class="flex justify-between items-center gap-3">
+                                <div class="min-w-0">
+                                    <span class="text-[11px] font-bold text-gray-600 uppercase block" x-text="item.name"></span>
+                                    <span x-show="item.prev" class="text-[10px] text-gray-400 block" x-text="'Innflytting: ' + item.prev"></span>
+                                    <button x-show="item.custom" @click="room.items.splice(iIdx, 1)" class="text-[9px] text-red-300 font-bold uppercase">Fjern</button>
+                                </div>
+                                <div class="flex gap-2 w-1/2 shrink-0">
+                                    <button @click="item.status = item.status === 'OK' ? null : 'OK'" :class="item.status === 'OK' ? 'ok shadow-md' : 'bg-white border text-gray-400'" class="flex-1 py-2.5 rounded-lg text-[10px] font-black">OK</button>
+                                    <button @click="item.status = item.status === 'FEIL' ? null : 'FEIL'" :class="item.status === 'FEIL' ? 'feil shadow-md' : 'bg-white border text-gray-400'" class="flex-1 py-2.5 rounded-lg text-[10px] font-black">FEIL</button>
+                                </div>
+                            </div>
+
+                            <div x-show="item.status === 'FEIL'" class="mt-3 p-4 bg-white border border-red-100 rounded-2xl space-y-3 shadow-sm">
+                                <div class="flex flex-wrap gap-2">
+                                    <template x-for="opt in item.options">
+                                        <button @click="toggleOpt(item, opt)" :class="item.sel.includes(opt) ? 'bg-red-700 text-white' : 'bg-red-50 text-red-700'" class="px-3 py-1.5 rounded-lg text-[10px] font-bold" x-text="opt"></button>
+                                    </template>
+                                </div>
+
+                                <div class="grid grid-cols-2 gap-2 text-[10px] font-bold">
+                                    <button @click="item.ansvar = 'Slitasje'" :class="item.ansvar === 'Slitasje' ? 'bg-gray-800 text-white' : 'bg-gray-50 text-gray-500'" class="py-2 rounded-lg">Normal slitasje</button>
+                                    <button @click="item.ansvar = 'Skade'" :class="item.ansvar === 'Skade' ? 'bg-red-700 text-white' : 'bg-gray-50 text-red-600'" class="py-2 rounded-lg">Erstatningskrav</button>
+                                </div>
+
+                                <div x-show="item.ansvar === 'Skade'" class="flex items-center gap-2 bg-yellow-50 p-2 rounded-lg">
+                                    <span class="text-[10px] font-bold text-yellow-700 uppercase">Istandsettelse kr:</span>
+                                    <input type="number" inputmode="numeric" min="0" x-model="item.pris" class="w-28 bg-transparent border-b border-yellow-300 outline-none font-bold">
+                                </div>
+
+                                <textarea x-model="item.kommentar" placeholder="Utdypende beskrivelse…" rows="2" class="field text-sm"></textarea>
+
+                                <div class="flex items-center gap-2 flex-wrap">
+                                    <label class="bg-gray-100 px-3 py-2 rounded-lg cursor-pointer text-[10px] font-bold text-gray-600">
+                                        📸 Ta bilde<input type="file" accept="image/*" capture="environment" class="hidden" @change="addPhotos($event, item.photos)">
+                                    </label>
+                                    <label class="bg-gray-100 px-3 py-2 rounded-lg cursor-pointer text-[10px] font-bold text-gray-600">
+                                        🖼 Galleri<input type="file" accept="image/*" multiple class="hidden" @change="addPhotos($event, item.photos)">
+                                    </label>
+                                </div>
+                                <div x-show="item.photos.length" class="flex gap-2 flex-wrap">
+                                    <template x-for="(ph, i) in item.photos" :key="ph.id">
+                                        <div class="relative"><img :src="ph.data" class="h-16 w-16 object-cover rounded-lg">
+                                            <button @click="item.photos.splice(i,1)" class="absolute -top-2 -right-2 bg-white border rounded-full w-5 h-5 text-[10px] text-red-500">×</button></div>
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div class="flex flex-wrap gap-2 pt-2">
+                        <button @click="addCustomItem(room)" class="px-2 py-1.5 border border-dashed rounded text-[9px] font-bold text-gray-400 uppercase">+ Eget punkt</button>
+                        <template x-for="t in appliancesFor(room)">
+                            <button @click="addAppliance(room, t)" class="px-2 py-1.5 border border-dashed rounded text-[9px] font-bold text-gray-400 uppercase" x-text="'+ ' + t"></button>
+                        </template>
+                    </div>
+                </div>
+                </div>
+            </div>
+        </template>
+
+        <div class="flex gap-2 mb-8">
+            <select x-model="newRoomType" class="field text-sm font-bold flex-1">
+                <template x-for="t in roomTypes"><option :value="t" x-text="t"></option></template>
+            </select>
+            <button @click="addRoom" class="bg-white border-2 border-dashed px-4 rounded-xl font-bold text-[10px] text-gray-500 uppercase">+ Legg til rom</button>
+        </div>
+
+        <!-- 04. Merknader -->
+        <section class="card p-6 mb-4 space-y-3">
+            <h2 class="h2 border-b pb-2">04. Andre merknader</h2>
+            <textarea x-model="p.merknader" rows="3" placeholder="Avtaler, frister, annet som skal med i protokollen…" class="field text-sm"></textarea>
+        </section>
+
+        <!-- 05. Signering -->
+        <section class="card p-6 space-y-6">
+            <div class="flex justify-between items-center border-b pb-2">
+                <h2 class="h2">05. Oppsummering og signering</h2>
+                <div class="text-right">
+                    <span class="text-[9px] font-bold text-gray-400 uppercase">Sum krav</span>
+                    <div class="text-lg font-black text-red-600" x-text="kr(total())"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-2 text-center">
+                <div class="bg-gray-50 rounded-xl p-2"><div class="text-lg font-black text-gray-800" x-text="stats().checked + '/' + stats().items"></div><div class="text-[9px] font-bold text-gray-400 uppercase">Kontrollert</div></div>
+                <div class="bg-red-50 rounded-xl p-2"><div class="text-lg font-black text-red-700" x-text="stats().feil"></div><div class="text-[9px] font-bold text-red-400 uppercase">Avvik</div></div>
+                <div class="bg-gray-50 rounded-xl p-2"><div class="text-lg font-black text-gray-800" x-text="stats().photos"></div><div class="text-[9px] font-bold text-gray-400 uppercase">Bilder</div></div>
+            </div>
+
+            <div class="bg-blue-50 p-4 border-l-4 border-blue-900 text-xs leading-relaxed" x-text="legalText()"></div>
+
+            <div class="space-y-2">
+                <label class="lbl !ml-0 !text-blue-900">Boligforvalter</label>
+                <input type="text" x-model="p.forvalter" class="text-sm font-black border-b outline-none w-full py-1">
+                <canvas id="sig-forvalter" class="sig"></canvas>
+                <button @click="clearSig('forvalter')" class="w-full text-[10px] text-gray-400 uppercase">Tøm signatur</button>
+            </div>
+
+            <div class="space-y-2 border-t pt-6">
+                <label class="lbl !ml-0 !text-red-600" x-text="p.fullmakt ? 'Fullmektig for leietaker' : 'Leietaker'"></label>
+                <span class="text-sm font-black block" x-text="(p.fullmakt ? p.fullmektig : p.leietaker) || '_________________'"></span>
+                <canvas id="sig-leietaker" class="sig"></canvas>
+                <button @click="clearSig('leietaker')" class="w-full text-[10px] text-gray-400 uppercase">Tøm signatur</button>
+            </div>
+
+            <div x-show="missingInfo().length" class="text-xs text-amber-700 bg-amber-50 rounded-xl p-3 space-y-2">
+                <p x-text="'Mangler: ' + missingInfo().join(', ')"></p>
+                <button x-show="stats().checked < stats().items" @click="restOk" class="font-black uppercase text-[10px] text-blue-900 underline">Sett resten til OK</button>
+            </div>
+
+            <div class="grid grid-cols-2 gap-3">
+                <button @click="makePdf('save')" :disabled="busy" class="bg-[#002664] text-white py-5 rounded-[20px] font-black text-sm shadow-xl active:scale-[0.98] disabled:opacity-50" x-text="busy ? 'Lager…' : 'LAGRE PDF'"></button>
+                <button @click="makePdf('share')" :disabled="busy" class="bg-white text-[#002664] border-2 border-[#002664] py-5 rounded-[20px] font-black text-sm active:scale-[0.98] disabled:opacity-50">DEL PDF</button>
+            </div>
+        </section>
+        </div>
+        </template>
+    </div>
+</div>
+
+<script>
+/* ---------- Maler for rom og punkter ---------- */
+const GENERIC = ['Skadet', 'Skittent', 'Mangler', 'Defekt'];
+const OPTS = {
+    'Vegger / tak':            ['Skitne vegger', 'Hull i vegg', 'Merker / riper', 'Behov for maling', 'Fuktskade'],
+    'Gulv / lister':           ['Hakk / sår', 'Riper', 'Svelling', 'Flekker', 'Løse lister'],
+    'Dører / karmer':          ['Defekt dørvrider', 'Dør subber', 'Skadet dørblad', 'Defekt lås', 'Skadet karm'],
+    'Inngangsdør / lås':       ['Defekt lås', 'Skadet dørblad', 'Dør subber', 'Defekt dørpumpe', 'Mangler dørskilt'],
+    'Vinduer':                 ['Kan ikke åpnes', 'Kan ikke lukkes', 'Sprekk i glass', 'Defekt vrider', 'Kondens mellom glass'],
+    'Stikkontakter / brytere': ['Løs stikkontakt', 'Svimerke', 'Mangler deksel', 'Defekt uttak', 'Defekt bryter'],
+    'Belysning':               ['Mangler taklampe', 'Ingen strøm', 'Defekt'],
+    'Varmeovn / radiator':     ['Virker ikke', 'Skadet', 'Mangler termostat'],
+    'Garderobe / skap':        ['Skadet dør', 'Mangler hylle', 'Defekt hengsel'],
+    'Ringeklokke / porttelefon': ['Virker ikke', 'Mangler'],
+    'Benkeplate':              ['Brennmerker', 'Kuttmerker', 'Svelling', 'Løs'],
+    'Kjøkkenskap / skuffer':   ['Skadet front', 'Defekt hengsel', 'Mangler håndtak', 'Fuktskade under vask'],
+    'Oppvaskkum / blandebatteri': ['Lekker', 'Tett avløp', 'Defekt batteri'],
+    'Kjøkkenventilator':       ['Virker ikke', 'Skittent filter', 'Mangler filter'],
+    'Vegger / fliser':         ['Sprekk i flis', 'Misfarget fuge', 'Hull i flis / membran', 'Mugg'],
+    'Gulv / sluk':             ['Tett sluk', 'Skittent sluk', 'Sprekk i flis', 'Misfarget fuge'],
+    'Toalett':                 ['Renner', 'Sprekk', 'Løst sete', 'Tett'],
+    'Servant / blandebatteri': ['Lekker', 'Sprekk', 'Tett avløp', 'Defekt batteri'],
+    'Dusj / badekar':          ['Lekker', 'Skadet dusjvegg', 'Defekt dusjhode / slange', 'Mugg i silikon'],
+    'Speil / baderomsskap':    ['Knust', 'Mangler', 'Defekt lys'],
+    'Ventilasjon':             ['Virker ikke', 'Skittent / tett'],
+    'Vaskemaskinuttak':        ['Lekker', 'Mangler'],
+    'Gulv / dekke':            ['Skadet', 'Skittent', 'Løse bord'],
+    'Rekkverk':                ['Løst', 'Skadet', 'Utrygt'],
+    'Balkongdør':              ['Kan ikke lukkes', 'Defekt vrider', 'Sprekk i glass'],
+    'Røykvarsler':             ['Mangler', 'Virker ikke', 'Mangler batteri', 'Utløpt'],
+    'Brannslukningsapparat':   ['Mangler', 'Ikke kontrollert / utløpt', 'Brukt'],
+    'Brannteppe':              ['Mangler', 'Brukt'],
+    'Utvask':                  ['Ikke rengjort', 'Mangelfull rengjøring', 'Kjøkken / hvitevarer ikke rengjort', 'Bad ikke rengjort'],
+    'Rydding / tømming':       ['Gjenstander igjen i bolig', 'Gjenstander igjen i bod', 'Søppel igjen'],
+};
+const APPLIANCES = {
+    'Komfyr':        ['Plater virker ikke', 'Stekeovn defekt', 'Skitten', 'Mangler komfyrvakt'],
+    'Kjøleskap':     ['Kjøler ikke', 'Mangler deler', 'Skittent', 'Ødelagt pakning'],
+    'Fryser':        ['Fryser ikke', 'Mangler skuffer', 'Ikke avrimet'],
+    'Oppvaskmaskin': ['Lekker', 'Vasker dårlig', 'Virker ikke'],
+    'Mikrobølgeovn': ['Virker ikke', 'Skitten'],
+    'Vaskemaskin':   ['Ulyd', 'Pumpefeil', 'Lekker', 'Virker ikke'],
+    'Tørketrommel':  ['Virker ikke', 'Skittent lofilter'],
+};
+const BASE = ['Vegger / tak', 'Gulv / lister', 'Dører / karmer', 'Vinduer', 'Stikkontakter / brytere', 'Belysning'];
+const ROOMS = {
+    'Entré / gang':   ['Inngangsdør / lås', 'Vegger / tak', 'Gulv / lister', 'Dører / karmer', 'Garderobe / skap', 'Stikkontakter / brytere', 'Belysning', 'Ringeklokke / porttelefon'],
+    'Stue':           [...BASE, 'Varmeovn / radiator'],
+    'Kjøkken':        [...BASE, 'Benkeplate', 'Kjøkkenskap / skuffer', 'Oppvaskkum / blandebatteri', 'Kjøkkenventilator'],
+    'Bad':            ['Vegger / fliser', 'Gulv / sluk', 'Dører / karmer', 'Toalett', 'Servant / blandebatteri', 'Dusj / badekar', 'Speil / baderomsskap', 'Ventilasjon', 'Stikkontakter / brytere', 'Belysning'],
+    'Soverom':        [...BASE, 'Garderobe / skap', 'Varmeovn / radiator'],
+    'WC':             ['Vegger / tak', 'Gulv / lister', 'Dører / karmer', 'Toalett', 'Servant / blandebatteri', 'Ventilasjon', 'Belysning'],
+    'Vaskerom':       ['Vegger / tak', 'Gulv / sluk', 'Dører / karmer', 'Vaskemaskinuttak', 'Ventilasjon', 'Belysning'],
+    'Bod':            ['Vegger / tak', 'Gulv / lister', 'Dører / karmer', 'Belysning'],
+    'Balkong':        ['Gulv / dekke', 'Rekkverk', 'Balkongdør', 'Belysning'],
+    'Annet rom':      [...BASE],
+    'Brannsikring':   ['Røykvarsler', 'Brannslukningsapparat', 'Brannteppe'],
+    'Rengjøring':     ['Utvask', 'Rydding / tømming'],
+};
+const APP_ROOMS = { 'Kjøkken': ['Komfyr', 'Kjøleskap', 'Fryser', 'Oppvaskmaskin', 'Mikrobølgeovn'], 'Bad': ['Vaskemaskin', 'Tørketrommel'], 'Vaskerom': ['Vaskemaskin', 'Tørketrommel'] };
+const DEFAULT_ROOMS = ['Entré / gang', 'Stue', 'Kjøkken', 'Bad', 'Soverom', 'Brannsikring', 'Rengjøring'];
+const TEKST_INN = 'Leietaker bekrefter med dette å ha mottatt nøkler som spesifisert i punkt 02, og har i fellesskap med utleier undersøkt boligen. Boligen overtas i forevist stand med de merknader som er ført i protokollen.';
+const TEKST_UT = 'Utleier tar forbehold om krav som følge av skjulte mangler eller mangelfull utvask som oppdages ved etterkontroll. Slikt krav må fremsettes skriftlig innen 14 dager.';
+const APP_VERSION = '2.0';
+
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const num = v => Number(v) || 0;
+
+/* ---------- Lagring (IndexedDB) ---------- */
+const db = {
+    _db: null,
+    open() {
+        if (this._db) return Promise.resolve(this._db);
+        return new Promise((res, rej) => {
+            const r = indexedDB.open('flytteprotokoll', 1);
+            r.onupgradeneeded = () => { r.result.createObjectStore('protocols', { keyPath: 'id' }); r.result.createObjectStore('meta', { keyPath: 'id' }); };
+            r.onsuccess = () => { this._db = r.result; res(r.result); };
+            r.onerror = () => rej(r.error);
+        });
+    },
+    async tx(stores, mode, fn) {
+        const d = await this.open();
+        return new Promise((res, rej) => {
+            const t = d.transaction(stores, mode);
+            const out = fn(t);
+            t.oncomplete = () => res(out && 'result' in out ? out.result : out);
+            t.onerror = () => rej(t.error);
+        });
+    },
+    all(store) { return this.tx([store], 'readonly', t => t.objectStore(store).getAll()); },
+    get(store, id) { return this.tx([store], 'readonly', t => t.objectStore(store).get(id)); },
+    put(store, v) { return this.tx([store], 'readwrite', t => { t.objectStore(store).put(v); }); },
+    del(id) { return this.tx(['protocols', 'meta'], 'readwrite', t => { t.objectStore('protocols').delete(id); t.objectStore('meta').delete(id); }); },
+};
+
+async function sha256(s) {
+    const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('fp:' + s));
+    return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+/* Leser et bilde, retter rotasjon og skalerer ned til maks `max` px som JPEG. */
+function compressImage(file, max = 1600, quality = 0.72, type = 'image/jpeg') {
+    return new Promise((res, rej) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+            const c = document.createElement('canvas');
+            c.width = Math.round(img.naturalWidth * s); c.height = Math.round(img.naturalHeight * s);
+            const ctx = c.getContext('2d');
+            if (type === 'image/jpeg') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); }
+            ctx.drawImage(img, 0, 0, c.width, c.height);
+            URL.revokeObjectURL(url);
+            res({ id: uid(), data: c.toDataURL(type, quality), w: c.width, h: c.height });
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Kunne ikke lese bildet')); };
+        img.src = url;
+    });
+}
+
+function blobToBase64(blob) {
+    return new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.readAsDataURL(blob); });
+}
+
+function app() {
+    return {
+        locked: false, pinInput: '', newPin: '',
+        view: 'list', search: '', list: [], p: null,
+        saveState: 'saved', saveTimer: null, busy: false, toastMsg: '', toastTimer: null,
+        hiddenAt: 0, pads: {}, newRoomType: 'Soverom', roomTypes: Object.keys(ROOMS),
+        isAndroid: !!window.FlytteAndroid,
+        settings: { navn: '', tittel: 'Boligforvalter', enhet: '', kommune: '', logo: '', pinHash: '', tekstInn: TEKST_INN, tekstUt: TEKST_UT, adresser: [], setupDone: false },
+        newAdresse: '', setupStep: 0,
+
+        async start() {
+            try {
+                const s = await db.get('meta', '__settings');
+                if (s) Object.assign(this.settings, s.value);
+            } catch (e) { this.toast('Lagring er ikke tilgjengelig i denne nettleseren'); }
+            if (!this.settings.setupDone && this.settings.navn) this.settings.setupDone = true; // satt opp før veiviseren fantes
+            if (!this.settings.setupDone) this.view = 'setup';
+            this.locked = !!this.settings.pinHash;
+            if (this.locked) this.$nextTick(() => this.$refs.pin.focus());
+            await this.loadList();
+            window.addEventListener('resize', () => this.fitPads());
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) { this.hiddenAt = Date.now(); this.flushSave(); }
+                else if (this.settings.pinHash && Date.now() - this.hiddenAt > 5 * 60 * 1000) { this.locked = true; this.pinInput = ''; }
+            });
+            window.addEventListener('pagehide', () => this.flushSave());
+            window.fpBack = () => {
+                if (this.locked || this.view === 'list' || this.view === 'setup') return false;
+                if (this.view === 'edit') this.closeProtocol(); else { this.saveSettings(); this.view = 'list'; }
+                return true;
+            };
+            if ('serviceWorker' in navigator && location.protocol === 'https:' && !this.isAndroid) navigator.serviceWorker.register('sw.js').catch(() => {});
+        },
+
+        toast(msg) { this.toastMsg = msg; clearTimeout(this.toastTimer); this.toastTimer = setTimeout(() => this.toastMsg = '', 2500); },
+        orgLine() { return [this.settings.enhet, this.settings.kommune].filter(Boolean).join(' • '); },
+        appVersion() { return this.isAndroid ? window.FlytteAndroid.getVersion() : APP_VERSION + ' (web)'; },
+
+        /* ---------- PIN ---------- */
+        async unlock() {
+            if (await sha256(this.pinInput) === this.settings.pinHash) { this.locked = false; this.pinInput = ''; this.$nextTick(() => this.fitPads()); }
+            else { this.toast('Feil PIN'); this.pinInput = ''; }
+        },
+        async setPin() {
+            if (!/^\d{4,8}$/.test(this.newPin)) { this.toast('PIN må være 4–8 siffer'); return; }
+            this.settings.pinHash = await sha256(this.newPin); this.newPin = '';
+            await this.saveSettings(); this.toast('PIN er lagret');
+        },
+
+        /* ---------- Innstillinger ---------- */
+        async saveSettings() { await db.put('meta', { id: '__settings', value: JSON.parse(JSON.stringify(this.settings)) }); },
+        async setLogo(e) {
+            const f = e.target.files[0]; e.target.value = '';
+            if (!f) return;
+            try { this.settings.logo = (await compressImage(f, 500, 0.9, 'image/png')).data; await this.saveSettings(); }
+            catch (err) { this.toast(err.message); }
+        },
+        async finishSetup() {
+            if (this.newPin) {
+                if (!/^\d{4,8}$/.test(this.newPin)) { this.toast('PIN må være 4–8 siffer'); return; }
+                this.settings.pinHash = await sha256(this.newPin); this.newPin = '';
+            }
+            if (this.newAdresse.trim()) this.addAdresse();
+            this.settings.setupDone = true;
+            await this.saveSettings();
+            this.view = 'list';
+        },
+        restOk() {
+            const rest = this.activeRooms().flatMap(r => r.items.filter(i => !i.status));
+            if (!rest.length || !confirm(`Sette ${rest.length} punkter uten status til OK?\n\nPunkter du har merket FEIL blir ikke endret.`)) return;
+            rest.forEach(i => i.status = 'OK');
+            this.queueSave();
+        },
+        addAdresse() {
+            const a = this.newAdresse.trim();
+            if (!a) return;
+            if (!this.settings.adresser.includes(a)) this.settings.adresser.push(a);
+            this.newAdresse = ''; this.saveSettings();
+        },
+        resetTexts() { this.settings.tekstInn = TEKST_INN; this.settings.tekstUt = TEKST_UT; this.saveSettings(); },
+
+        /* ---------- Liste ---------- */
+        async loadList() {
+            const all = await db.all('meta').catch(() => []);
+            this.list = all.filter(m => m.id !== '__settings').sort((a, b) => b.updated - a.updated);
+        },
+        filteredList() {
+            const q = this.search.trim().toLowerCase();
+            return q ? this.list.filter(m => (m.adresse + ' ' + m.leietaker).toLowerCase().includes(q)) : this.list;
+        },
+
+        mkItem(name, extra = {}) {
+            return { id: uid(), name, status: null, options: OPTS[name] || APPLIANCES[name] || GENERIC, sel: [], ansvar: 'Slitasje', pris: '', kommentar: '', photos: [], prev: '', ...extra };
+        },
+        mkRoom(type) {
+            return { id: uid(), type, name: type, open: false, onlyUt: type === 'Rengjøring', items: ROOMS[type].map(n => this.mkItem(n)) };
+        },
+        mkKey(navn, antall = '') { return { id: uid(), navn, antall, mangler: '', pris: '', prev: '' }; },
+
+        blank(type) {
+            return {
+                id: uid(), created: Date.now(), updated: Date.now(), pdf: 0, type, dato: today(),
+                adresse: '', leilnr: '', leietaker: '', fullmakt: false, fullmektig: '', strom: '', maler: '', malerFoto: [],
+                keys: [this.mkKey('Bolignøkler'), this.mkKey('Postkassenøkler'), this.mkKey('Bodnøkler')],
+                rooms: DEFAULT_ROOMS.map(t => this.mkRoom(t)), merknader: '',
+                forvalter: this.settings.navn, sig: { forvalter: [], leietaker: [] }, refId: null,
+            };
+        },
+
+        async newProtocol(type) {
+            const p = this.blank(type);
+            p.rooms[0].open = true;
+            await this.show(p);
+            await this.saveNow();
+        },
+
+        async startUtflytting(id) {
+            const src = await db.get('protocols', id);
+            if (!src) return;
+            const p = this.blank('Utflytting');
+            Object.assign(p, { adresse: src.adresse, leilnr: src.leilnr, leietaker: src.leietaker, refId: src.id });
+            p.keys = src.keys.map(k => ({ ...this.mkKey(k.navn), prev: k.antall ? k.antall + ' stk' : '' }));
+            p.rooms = src.rooms.map(r => ({
+                ...r, id: uid(), open: false,
+                items: r.items.map(i => ({ ...this.mkItem(i.name), options: i.options, custom: i.custom, prev: this.prevText(i, src.id) })),
+            }));
+            if (!p.rooms.some(r => r.onlyUt)) p.rooms.push(this.mkRoom('Rengjøring'));
+            p.rooms[0].open = true;
+            await this.show(p);
+            await this.saveNow();
+            this.toast('Utflytting startet med funn fra innflyttingen');
+        },
+        prevText(i) {
+            if (i.status === 'OK') return 'OK';
+            if (i.status !== 'FEIL') return '';
+            const d = [i.sel.join(', '), i.kommentar].filter(Boolean).join(' – ');
+            return 'FEIL' + (d ? ': ' + d : '') + (i.photos.length ? ` (${i.photos.length} bilde)` : '');
+        },
+
+        async openProtocol(id) {
+            const p = await db.get('protocols', id);
+            if (p) await this.show(p); else this.toast('Fant ikke protokollen');
+        },
+
+        async show(p) {
+            this.p = p; this.view = 'edit'; this.saveState = 'saved';
+            window.scrollTo(0, 0);
+            await this.$nextTick();
+            this.initPads(); // x-if lager nye lerreter for hver protokoll
+            this.fitPads(true);
+            for (const who of ['forvalter', 'leietaker']) { this.pads[who].clear(); if (p.sig[who]?.length) this.pads[who].fromData(p.sig[who]); }
+        },
+
+        async closeProtocol() { await this.flushSave(); this.p = null; this.view = 'list'; await this.loadList(); },
+
+        async deleteProtocol(id) {
+            if (!confirm('Slette protokollen for godt?')) return;
+            await db.del(id); await this.loadList(); this.toast('Protokollen er slettet');
+        },
+
+        /* ---------- Autolagring ---------- */
+        queueSave() {
+            if (!this.p) return;
+            this.saveState = 'dirty';
+            clearTimeout(this.saveTimer);
+            this.saveTimer = setTimeout(() => this.saveNow(), 800);
+        },
+        async flushSave() { if (this.saveState === 'dirty') await this.saveNow(); },
+        async saveNow() {
+            clearTimeout(this.saveTimer);
+            if (!this.p) return;
+            const p = JSON.parse(JSON.stringify(this.p));
+            p.updated = Date.now();
+            this.p.updated = p.updated;
+            try {
+                await db.put('protocols', p);
+                await db.put('meta', { id: p.id, type: p.type, adresse: p.adresse, leietaker: p.leietaker, dato: p.dato, updated: p.updated, pdf: p.pdf });
+                this.saveState = 'saved';
+            } catch (e) { this.toast('Kunne ikke lagre: ' + (e.message || e)); }
+        },
+
+        /* ---------- Rom og punkter ---------- */
+        toggleRoom(idx) {
+            const open = !this.p.rooms[idx].open;
+            this.p.rooms.forEach(r => r.open = false);
+            this.p.rooms[idx].open = open;
+        },
+        roomLabel(room) {
+            const same = this.p.rooms.filter(r => r.name === room.name);
+            return same.length > 1 ? `${room.name} ${same.indexOf(room) + 1}` : room.name;
+        },
+        roomProgress(room) { return room.items.filter(i => i.status).length + '/' + room.items.length; },
+        roomHasFeil(room) { return room.items.some(i => i.status === 'FEIL'); },
+        roomDone(room) { return room.items.length && room.items.every(i => i.status); },
+        setAllOk(room) { room.items.forEach(i => { if (!i.status) i.status = 'OK'; }); },
+        renameRoom(room) { const n = prompt('Navn på rommet', room.name); if (n && n.trim()) room.name = n.trim(); },
+        removeRoom(idx) { if (confirm('Fjerne «' + this.roomLabel(this.p.rooms[idx]) + '» fra protokollen?')) this.p.rooms.splice(idx, 1); },
+        addRoom() {
+            const r = this.mkRoom(this.newRoomType);
+            this.p.rooms.forEach(x => x.open = false);
+            r.open = true;
+            const brann = this.p.rooms.findIndex(x => x.type === 'Brannsikring');
+            this.p.rooms.splice(brann < 0 ? this.p.rooms.length : brann, 0, r);
+        },
+        addCustomItem(room) { const n = prompt('Hva skal kontrolleres?'); if (n && n.trim()) room.items.push(this.mkItem(n.trim(), { custom: true })); },
+        appliancesFor(room) { return APP_ROOMS[room.type] || []; },
+        addAppliance(room, t) { room.items.push(this.mkItem(t, { custom: true })); },
+        toggleOpt(item, opt) { const i = item.sel.indexOf(opt); i > -1 ? item.sel.splice(i, 1) : item.sel.push(opt); },
+
+        async addPhotos(e, target) {
+            const files = [...e.target.files]; e.target.value = '';
+            for (const f of files) {
+                try { target.push(await compressImage(f)); } catch (err) { this.toast(err.message); }
+            }
+            this.queueSave();
+        },
+
+        /* ---------- Beregninger ---------- */
+        activeRooms() { return this.p.rooms.filter(r => !r.onlyUt || this.p.type === 'Utflytting'); },
+        total() {
+            let t = 0;
+            this.activeRooms().forEach(r => r.items.forEach(i => { if (i.status === 'FEIL' && i.ansvar === 'Skade') t += num(i.pris); }));
+            if (this.p.type === 'Utflytting') this.p.keys.forEach(k => t += num(k.pris));
+            return t;
+        },
+        stats() {
+            const items = this.activeRooms().flatMap(r => r.items);
+            return {
+                items: items.length, checked: items.filter(i => i.status).length, feil: items.filter(i => i.status === 'FEIL').length,
+                photos: items.reduce((s, i) => s + i.photos.length, 0) + this.p.malerFoto.length,
+            };
+        },
+        kr(v) { return num(v).toLocaleString('nb-NO').replace(/\s/g, ' ') + ' kr'; },
+        keysComplete() { return this.p.keys.every(k => !num(k.mangler) && !num(k.pris)); },
+        legalText() {
+            if (this.p.type === 'Innflytting') return this.settings.tekstInn;
+            return (this.keysComplete() ? 'Samtlige nøkler er levert utleier. ' : 'Nøkler er levert utleier som spesifisert i punkt 02. ') + this.settings.tekstUt;
+        },
+        missingInfo() {
+            const m = [];
+            if (!this.p.adresse) m.push('adresse');
+            if (!this.p.leietaker) m.push('leietaker');
+            const s = this.stats(); if (s.checked < s.items) m.push(`${s.items - s.checked} punkter uten status`);
+            if (!this.p.sig.forvalter.length) m.push('signatur boligforvalter');
+            if (!this.p.sig.leietaker.length) m.push('signatur leietaker');
+            return m;
+        },
+
+        /* ---------- Signatur ---------- */
+        initPads() {
+            for (const who of ['forvalter', 'leietaker']) {
+                const pad = new SignaturePad(document.getElementById('sig-' + who), { minWidth: 1, maxWidth: 2.4, penColor: '#000' });
+                pad.addEventListener('endStroke', () => { if (this.p) { this.p.sig[who] = pad.toData(); this.queueSave(); } });
+                this.pads[who] = pad;
+            }
+        },
+        fitPads(force) {
+            const ratio = Math.max(window.devicePixelRatio || 1, 1);
+            for (const who in this.pads) {
+                const c = this.pads[who].canvas;
+                if (!c.offsetWidth || (!force && c.width === Math.round(c.offsetWidth * ratio))) continue;
+                const data = this.pads[who].toData();
+                c.width = Math.round(c.offsetWidth * ratio); c.height = Math.round(c.offsetHeight * ratio);
+                c.getContext('2d').scale(ratio, ratio);
+                this.pads[who].clear();
+                if (data.length) this.pads[who].fromData(data);
+            }
+        },
+        clearSig(who) { this.pads[who].clear(); this.p.sig[who] = []; this.queueSave(); },
+
+        /* ---------- Formatering ---------- */
+        fmtDate(iso) { if (!iso) return '–'; const [y, m, d] = iso.split('-'); return `${d}.${m}.${y}`; },
+        fmtDateTime(ts) { if (!ts) return ''; const d = new Date(ts); return d.toLocaleDateString('nb-NO') + ' ' + d.toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' }); },
+
+        /* ---------- Sikkerhetskopi ---------- */
+        async exportBackup(all) {
+            const settings = { ...JSON.parse(JSON.stringify(this.settings)), pinHash: '' };
+            const data = { app: 'flytteprotokoll', version: 1, exported: new Date().toISOString(), settings, protocols: all ? await db.all('protocols') : [] };
+            const name = `flytteprotokoll-${all ? 'backup' : 'innstillinger'}-${today()}.json`;
+            const text = JSON.stringify(data);
+            if (this.isAndroid) { window.FlytteAndroid.saveFile(name, text); return; }
+            this.download(new Blob([text], { type: 'application/json' }), name);
+        },
+        async importBackup(e, fromSetup) {
+            const f = e.target.files[0]; e.target.value = '';
+            if (!f) return;
+            try {
+                const data = JSON.parse(await f.text());
+                if (data.app !== 'flytteprotokoll' || (!data.settings && !Array.isArray(data.protocols))) throw new Error('Ukjent fil');
+                const msg = [];
+                if (data.settings && (fromSetup || confirm('Bruke innstillingene fra filen?\n(navn, enhet, adresser, logo og tekster – PIN beholdes)'))) {
+                    const { pinHash, setupDone, ...rest } = data.settings;
+                    Object.assign(this.settings, rest, { setupDone: true });
+                    await this.saveSettings();
+                    msg.push('innstillinger');
+                }
+                const have = new Set(this.list.map(m => m.id));
+                const add = (data.protocols || []).filter(p => !have.has(p.id));
+                if (add.length && confirm(`Importere ${add.length} protokoller? (${data.protocols.length - add.length} finnes fra før og hoppes over)`)) {
+                    for (const p of add) {
+                        await db.put('protocols', p);
+                        await db.put('meta', { id: p.id, type: p.type, adresse: p.adresse, leietaker: p.leietaker, dato: p.dato, updated: p.updated, pdf: p.pdf });
+                    }
+                    await this.loadList();
+                    msg.push(add.length + ' protokoller');
+                }
+                this.toast(msg.length ? 'Importert: ' + msg.join(' og ') : 'Ingenting ble importert');
+                if (fromSetup && this.settings.setupDone) this.view = 'list';
+            } catch (err) { this.toast('Kunne ikke lese filen: ' + err.message); }
+        },
+        download(blob, name) {
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob); a.download = name;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+        },
+
+        /* ---------- PDF ---------- */
+        async makePdf(mode) {
+            const miss = this.missingInfo();
+            if (miss.length && !confirm('Protokollen mangler: ' + miss.join(', ') + '.\n\nLage PDF likevel?')) return;
+            this.busy = true;
+            await new Promise(r => setTimeout(r, 30));
+            try {
+                const doc = this.buildPdf();
+                const slug = (this.p.adresse || 'protokoll').replace(/[^\wæøåÆØÅ-]+/g, '_').replace(/_+$/, '');
+                const name = `${this.p.type}_${slug}_${this.p.dato || today()}.pdf`;
+                const blob = doc.output('blob');
+                if (this.isAndroid) {
+                    const b64 = await blobToBase64(blob);
+                    mode === 'share' ? window.FlytteAndroid.sharePdf(name, b64) : window.FlytteAndroid.savePdf(name, b64);
+                } else {
+                    const file = new File([blob], name, { type: 'application/pdf' });
+                    if (mode === 'share' && navigator.canShare?.({ files: [file] })) {
+                        await navigator.share({ files: [file], title: name }).catch(() => {});
+                    } else {
+                        if (mode === 'share') this.toast('Deling støttes ikke her – PDF-en lastes ned');
+                        this.download(blob, name);
+                    }
+                }
+                this.p.pdf = Date.now(); await this.saveNow();
+            } catch (err) {
+                console.error(err); alert('Kunne ikke lage PDF: ' + err.message);
+            } finally { this.busy = false; }
+        },
+
+        buildPdf() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: 'mm', format: 'a4', compress: true });
+            const p = this.p, S = this.settings;
+            const blue = [0, 38, 100], red = [190, 18, 60], grey = [100, 116, 139];
+            const L = 15, W = 180, BOTTOM = 280;
+            const title = p.type === 'Innflytting' ? 'INNFLYTTINGSPROTOKOLL' : 'UTFLYTTINGSPROTOKOLL';
+            let y = 0;
+            const need = h => { if (y + h > BOTTOM) { doc.addPage(); y = 22; } };
+            const heading = t => { need(14); doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...blue); doc.text(t, L, y); y += 3; };
+            const tableEnd = () => { y = doc.lastAutoTable.finalY + 8; };
+            const base = { margin: { left: L, right: L, top: 22, bottom: 20 }, styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' }, headStyles: { fillColor: blue } };
+
+            // Topp
+            doc.setFillColor(245, 247, 250); doc.rect(0, 0, 210, 38, 'F');
+            if (S.logo) { try { const ip = doc.getImageProperties(S.logo); const h = 18, w = Math.min(40, h * ip.width / ip.height); doc.addImage(S.logo, 'PNG', L, 10, w, w * ip.height / ip.width); } catch (e) {} }
+            doc.setTextColor(...blue); doc.setFont('helvetica', 'bold'); doc.setFontSize(18);
+            doc.text(title, 195, 18, { align: 'right' });
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+            doc.text(['Flytteprotokoll', this.orgLine()].filter(Boolean).join(' – '), 195, 25, { align: 'right' });
+            y = 46;
+
+            // 01 Detaljer
+            const info = [
+                ['Adresse', [p.adresse, p.leilnr && 'Leil. ' + p.leilnr].filter(Boolean).join(', ') || '–', 'Dato', this.fmtDate(p.dato)],
+                ['Leietaker', p.leietaker || '–', 'Rapporttype', p.type],
+                ['Boligforvalter', p.forvalter || '–', 'Strøm (kWh)', (p.strom || '–') + (p.maler ? '  |  Måler ' + p.maler : '')],
+            ];
+            if (p.fullmakt) info.push(['Møtt m/fullmakt', p.fullmektig || '–', '', '']);
+            heading('01. DETALJER');
+            doc.autoTable({ ...base, startY: y, body: info, theme: 'grid',
+                columnStyles: { 0: { fontStyle: 'bold', cellWidth: 30, textColor: grey }, 2: { fontStyle: 'bold', cellWidth: 26, textColor: grey } } });
+            tableEnd();
+
+            // Sammendrag
+            const st = this.stats(), sum = this.total();
+            need(16);
+            doc.setDrawColor(...blue); doc.setLineWidth(0.4); doc.roundedRect(L, y, W, 12, 2, 2, 'S');
+            doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(30);
+            doc.text(`Kontrollerte punkter: ${st.checked}/${st.items}     Avvik: ${st.feil}     Bilder: ${st.photos}`, L + 4, y + 7.5);
+            if (sum > 0) { doc.setTextColor(...red); doc.text('Erstatningskrav: ' + this.kr(sum), L + W - 4, y + 7.5, { align: 'right' }); }
+            y += 20;
+
+            // 02 Nøkler
+            const ut = p.type === 'Utflytting';
+            const keys = p.keys.filter(k => k.navn || k.antall);
+            if (keys.length) {
+                heading('02. NØKLER');
+                const head = ut ? [['Nøkkeltype', 'Levert', 'Mangler', 'Ved innflytting', 'Kostnad']] : [['Nøkkeltype', 'Utlevert antall']];
+                const body = keys.map(k => ut ? [k.navn, k.antall || '0', k.mangler || '0', k.prev || '–', num(k.pris) ? this.kr(k.pris) : '–'] : [k.navn, k.antall || '0']);
+                doc.autoTable({ ...base, startY: y, head, body, theme: 'striped' });
+                tableEnd();
+            }
+
+            // 03 Rom
+            let vedlegg = 0;
+            const photoList = [];
+            if (p.malerFoto.length) p.malerFoto.forEach(ph => photoList.push({ nr: ++vedlegg, label: 'Strømmåler', ph }));
+            heading('03. ROM OG UTSTYR');
+            y += 1;
+            this.activeRooms().forEach(room => {
+                const rows = room.items.filter(i => i.status).map(i => {
+                    let d = 'I orden';
+                    if (i.status === 'FEIL') {
+                        const nrs = i.photos.map(ph => { photoList.push({ nr: ++vedlegg, label: `${this.roomLabel(room)} – ${i.name}`, ph }); return vedlegg; });
+                        d = [i.sel.join(', '), i.kommentar,
+                            i.ansvar === 'Skade' ? 'Erstatningskrav' + (num(i.pris) ? ': ' + this.kr(i.pris) : '') : 'Normal slitasje',
+                            nrs.length ? 'Se vedlegg ' + nrs.join(', ') : ''].filter(Boolean).join('\n');
+                    }
+                    if (i.prev) d += '\nVed innflytting: ' + i.prev;
+                    return [i.name, i.status, d];
+                });
+                if (!rows.length) return;
+                need(20);
+                doc.autoTable({ ...base, startY: y, head: [[this.roomLabel(room).toUpperCase(), 'STATUS', 'BESKRIVELSE']], body: rows,
+                    columnStyles: { 0: { cellWidth: 48, fontStyle: 'bold' }, 1: { cellWidth: 18, halign: 'center' } },
+                    didParseCell: c => { if (c.section === 'body' && c.column.index === 1 && c.cell.raw === 'FEIL') { c.cell.styles.textColor = red; c.cell.styles.fontStyle = 'bold'; } } });
+                y = doc.lastAutoTable.finalY + 5;
+            });
+            const unchecked = this.activeRooms().map(r => [this.roomLabel(r), r.items.filter(i => !i.status).map(i => i.name)])
+                .filter(([, n]) => n.length).map(([r, n]) => `${r} (${n.join(', ')})`);
+            if (unchecked.length) {
+                need(12); doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.setTextColor(...grey);
+                const t = doc.splitTextToSize('Ikke kontrollert: ' + unchecked.join('; '), W);
+                need(t.length * 3.5); doc.text(t, L, y + 2); y += t.length * 3.5 + 4;
+            }
+            y += 3;
+
+            // 04 Merknader
+            if (p.merknader.trim()) {
+                heading('04. ANDRE MERKNADER');
+                doc.autoTable({ ...base, startY: y, body: [[p.merknader]], theme: 'plain', styles: { ...base.styles, fontSize: 9 } });
+                tableEnd();
+            }
+
+            // Sum
+            if (sum > 0) {
+                need(10); doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...red);
+                doc.text('TOTALT ERSTATNINGSKRAV: ' + this.kr(sum), L, y + 2); y += 10;
+            }
+
+            // Erklæring og signatur – holdes samlet
+            const legal = doc.splitTextToSize(this.legalText(), W - 8);
+            need(legal.length * 4 + 60);
+            doc.setFillColor(239, 246, 255); doc.rect(L, y, W, legal.length * 4 + 6, 'F');
+            doc.setFillColor(...blue); doc.rect(L, y, 1.2, legal.length * 4 + 6, 'F');
+            doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(30);
+            doc.text(legal, L + 5, y + 5.5); y += legal.length * 4 + 14;
+
+            const sig = (who, x) => { if (!this.pads[who].isEmpty()) doc.addImage(this.pads[who].toDataURL('image/png'), 'PNG', x, y, 60, 60 * this.pads[who].canvas.height / this.pads[who].canvas.width); };
+            sig('forvalter', L); sig('leietaker', 110);
+            y += 26;
+            doc.setDrawColor(120); doc.setLineWidth(0.2); doc.line(L, y, L + 75, y); doc.line(110, y, 185, y);
+            doc.setFontSize(8.5); doc.setTextColor(30);
+            doc.setFont('helvetica', 'bold'); doc.text(p.forvalter || '', L, y + 5);
+            doc.text((p.fullmakt ? p.fullmektig : p.leietaker) || '', 110, y + 5);
+            doc.setFont('helvetica', 'normal');
+            doc.text([S.tittel, S.enhet].filter(Boolean).join(', '), L, y + 9.5);
+            doc.text(p.fullmakt ? `Med fullmakt for ${p.leietaker || 'leietaker'}` : 'Leietaker', 110, y + 9.5);
+            doc.text('Dato: ' + this.fmtDate(p.dato), L, y + 14);
+
+            // Vedlegg
+            if (photoList.length) {
+                doc.addPage(); y = 22;
+                doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...blue);
+                doc.text('VEDLEGG – BILDEDOKUMENTASJON', L, y); y += 8;
+                const colW = 87, maxH = 75;
+                for (let i = 0; i < photoList.length; i += 2) {
+                    const pair = photoList.slice(i, i + 2).map(o => { let w = colW, h = colW * o.ph.h / o.ph.w; if (h > maxH) { h = maxH; w = maxH * o.ph.w / o.ph.h; } return { ...o, w, h }; });
+                    const rowH = Math.max(...pair.map(o => o.h)) + 12;
+                    need(rowH);
+                    pair.forEach((o, j) => {
+                        const x = L + j * (colW + 6);
+                        doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(30);
+                        doc.text(doc.splitTextToSize(`Vedlegg ${o.nr}: ${o.label}`, colW)[0], x, y);
+                        doc.addImage(o.ph.data, 'JPEG', x, y + 2, o.w, o.h, undefined, 'FAST');
+                    });
+                    y += rowH;
+                }
+            }
+
+            // Topptekst og bunntekst
+            const n = doc.internal.getNumberOfPages();
+            for (let i = 1; i <= n; i++) {
+                doc.setPage(i);
+                doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(150);
+                if (i > 1) { doc.text(`${title} – ${p.adresse || ''}`, L, 12); doc.text(this.fmtDate(p.dato), 195, 12, { align: 'right' }); doc.setDrawColor(220); doc.line(L, 14, 195, 14); }
+                doc.text(`Side ${i} av ${n}`, 195, 290, { align: 'right' });
+                doc.text(['Flytteprotokoll', S.enhet, S.kommune].filter(Boolean).join(' • '), L, 290);
+            }
+            return doc;
+        },
+    };
+}
+</script>
+</body>
+</html>
