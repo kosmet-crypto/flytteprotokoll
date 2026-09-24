@@ -25,6 +25,10 @@ android {
         versionCode((System.getenv('VERSION_CODE') ?: '1') as int)
         versionName "2.0.${System.getenv('VERSION_CODE') ?: '0'}"
         // Where the app looks for newer APKs (GitHub Releases of this repo).
+        // Bump android/shell-version.txt when this Android code changes in a way the web app
+        // depends on (new bridge methods etc.). Only then do phones need to install a new APK;
+        // everything else reaches them as a silent content update.
+        buildConfigField 'int', 'SHELL_VERSION', rootProject.file('shell-version.txt').text.trim()
         buildConfigField 'String', 'UPDATE_REPO', "\"${System.getenv('GITHUB_REPOSITORY') ?: 'kosmet-crypto/flytteprotokoll'}\""
     }
 

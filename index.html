@@ -178,7 +178,7 @@
     <!-- ============ INNSTILLINGER ============ -->
     <div x-show="view === 'settings'">
         <div class="sticky top-0 z-20 bg-[#f1f5f9] py-4 flex items-center gap-3">
-            <button @click="saveSettings(); view = 'list'" class="text-blue-900 font-bold text-sm">‹ Tilbake</button>
+            <button @click="saveSettings(); view = 'list'; androidIdle()" class="text-blue-900 font-bold text-sm">‹ Tilbake</button>
             <span class="font-black uppercase text-xs text-gray-700">Innstillinger</span>
         </div>
 
@@ -595,7 +595,7 @@ const TEKST_UT = 'Utleier tar forbehold om krav som følge av skjulte mangler el
 const EPOST_EMNE = '{type}sprotokoll – {adresse} {leil} – {dato}';
 const EPOST_TEKST = 'Hei {leietaker},\n\nVedlagt følger {typel}sprotokollen for {adresse} {leil}, datert {dato}.\n\nTa kontakt hvis noe er uklart.\n\nMed vennlig hilsen\n{navn}\n{tittel}, {enhet}';
 const FRIST_DAGER = 14;
-const APP_VERSION = '2.1';
+const APP_VERSION = '2.2';
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const today = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
@@ -684,6 +684,8 @@ function app() {
                 else if (this.settings.pinHash && Date.now() - this.hiddenAt > 5 * 60 * 1000) { this.locked = true; this.pinInput = ''; }
             });
             window.addEventListener('pagehide', () => this.flushSave());
+            // Android applies downloaded app updates only while nothing is being edited.
+            window.fpCanReload = () => this.view === 'list' && !this.locked && !this.busy && this.saveState === 'saved';
             window.fpBack = () => {
                 if (this.locked || this.view === 'list' || this.view === 'setup') return false;
                 if (this.view === 'edit') this.closeProtocol(); else { this.saveSettings(); this.view = 'list'; }
@@ -859,7 +861,8 @@ function app() {
             this.toast('Korrigert kopi laget');
         },
 
-        async closeProtocol() { await this.flushSave(); this.p = null; this.view = 'list'; await this.loadList(); },
+        async closeProtocol() { await this.flushSave(); this.p = null; this.view = 'list'; await this.loadList(); this.androidIdle(); },
+        androidIdle() { if (this.isAndroid && window.FlytteAndroid.onIdle) setTimeout(() => window.FlytteAndroid.onIdle(), 300); },
 
         async deleteProtocol(id) {
             if (!confirm('Slette protokollen for godt?')) return;

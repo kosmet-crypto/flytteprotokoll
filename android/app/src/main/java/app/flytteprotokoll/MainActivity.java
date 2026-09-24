@@ -6,10 +6,10 @@ import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.provider.MediaStore;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
@@ -25,15 +25,10 @@ import android.widget.Toast;
 import androidx.core.content.FileProvider;
 import androidx.webkit.WebViewAssetLoader;
 
-import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -54,13 +49,19 @@ public class MainActivity extends Activity {
     private Uri pendingCameraUri;
     private byte[] pendingSaveBytes;
     private String pendingSaveDoneMsg;
+    private Updater updater;
+    private volatile boolean contentReady;
+    private File pendingApk;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        updater = new Updater(this);
+        // Downloaded content (if any) first; files it lacks fall through to the bundled assets.
         final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
                 .setDomain(HOST)
+                .addPathHandler("/assets/www/", updater.new ContentPathHandler())
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
                 .build();
 
@@ -125,8 +126,6 @@ public class MainActivity extends Activity {
 
         if (savedInstanceState != null) webView.restoreState(savedInstanceState);
         else webView.loadUrl(START_URL);
-
-        if (savedInstanceState == null) checkForUpdate(false);
     }
 
     /** Starts the camera app, writing the photo to a cache file we share through FileProvider. */
@@ -147,73 +146,114 @@ public class MainActivity extends Activity {
         }
     }
 
-    /* ---------- update check ---------- */
+    /* ---------- updates ---------- */
 
-    private static final long UPDATE_CHECK_INTERVAL = 12 * 60 * 60 * 1000L;
+    private static final long CHECK_INTERVAL = 6 * 60 * 60 * 1000L;
+    private static final long APK_PROMPT_INTERVAL = 12 * 60 * 60 * 1000L;
 
     /**
-     * Looks up the latest GitHub Release (tagged v2.0.<versionCode>) and offers to download it
-     * when it is newer than this install. The automatic check on launch is throttled and silent;
-     * a manual check (the button in Innstillinger) always runs and reports the result.
+     * Reads web.json from the latest release. New web content is downloaded and applied
+     * silently; only a release that needs a newer Android shell asks to install a new APK.
+     * The automatic check runs at most every few hours; the button in Innstillinger always runs.
      */
     private void checkForUpdate(final boolean manual) {
         final SharedPreferences prefs = getSharedPreferences("update", MODE_PRIVATE);
-        long now = System.currentTimeMillis();
-        if (!manual && now - prefs.getLong("lastCheck", 0) < UPDATE_CHECK_INTERVAL) return;
+        final long now = System.currentTimeMillis();
+        if (!manual && now - prefs.getLong("lastCheck", 0) < CHECK_INTERVAL) return;
         prefs.edit().putLong("lastCheck", now).apply();
         if (manual) toast("Ser etter oppdatering…");
 
         new Thread(() -> {
             try {
-                URL api = new URL("https://api.github.com/repos/" + BuildConfig.UPDATE_REPO + "/releases/latest");
-                HttpURLConnection c = (HttpURLConnection) api.openConnection();
-                c.setConnectTimeout(8000);
-                c.setReadTimeout(8000);
-                c.setRequestProperty("Accept", "application/vnd.github+json");
-                if (c.getResponseCode() != 200) throw new IllegalStateException("HTTP " + c.getResponseCode());
-                String body;
-                try (InputStream in = c.getInputStream()) {
-                    ByteArrayOutputStream buf = new ByteArrayOutputStream();
-                    byte[] b = new byte[8192];
-                    for (int n; (n = in.read(b)) > 0; ) buf.write(b, 0, n);
-                    body = buf.toString("UTF-8");
+                Updater.Release r = Updater.fetchRelease();
+                if (r.shell > BuildConfig.SHELL_VERSION) {
+                    if (manual || now - prefs.getLong("lastApkPrompt", 0) > APK_PROMPT_INTERVAL) {
+                        prefs.edit().putLong("lastApkPrompt", now).apply();
+                        runOnUiThread(this::showApkDialog);
+                    }
+                } else if (updater.installContent(r.version)) {
+                    contentReady = true;
+                    runOnUiThread(this::reloadIfIdle);
+                } else if (manual) {
+                    toast("Du har nyeste versjon");
                 }
-                String tag = new JSONObject(body).optString("tag_name", "");
-                final long latest = Long.parseLong(tag.substring(tag.lastIndexOf('.') + 1));
-                final String name = tag.startsWith("v") ? tag.substring(1) : tag;
-                if (latest > installedVersionCode()) runOnUiThread(() -> showUpdateDialog(name));
-                else if (manual) toast("Du har nyeste versjon");
             } catch (Exception e) {
-                // No network, rate limit or unexpected response: the automatic check tries again later.
+                // No network or unexpected response: the automatic check tries again later.
                 if (manual) toast("Kunne ikke sjekke. Er du på nett?");
             }
         }).start();
+    }
+
+    /** Loads new content once the page says nothing is being edited (the protocol list is showing). */
+    private void reloadIfIdle() {
+        if (!contentReady) return;
+        webView.evaluateJavascript("typeof fpCanReload === 'function' && fpCanReload()", idle -> {
+            if (!"true".equals(idle) || !contentReady) return;
+            contentReady = false;
+            webView.reload();
+            toast("Appen er oppdatert");
+        });
     }
 
     private void toast(final String msg) {
         runOnUiThread(() -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
     }
 
-    private long installedVersionCode() throws Exception {
-        PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
-        return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
-    }
-
-    private void showUpdateDialog(String version) {
+    private void showApkDialog() {
         if (isFinishing()) return;
         new AlertDialog.Builder(this)
-                .setTitle("Ny versjon")
-                .setMessage("Flytteprotokoll " + version + " er klar. Last ned og åpne filen for å oppdatere. Protokollene dine blir liggende.")
-                .setPositiveButton("Last ned", (d, w) -> {
-                    Uri apk = Uri.parse("https://github.com/" + BuildConfig.UPDATE_REPO
-                            + "/releases/latest/download/flytteprotokoll.apk");
-                    try {
-                        startActivity(new Intent(Intent.ACTION_VIEW, apk));
-                    } catch (ActivityNotFoundException ignored) {
-                    }
-                })
+                .setTitle("Ny versjon av appen")
+                .setMessage("En ny versjon av Flytteprotokoll må installeres. Den lastes ned her, så trykker du Installer. Protokollene dine blir liggende.")
+                .setPositiveButton("Last ned", (d, w) -> downloadApk())
                 .setNegativeButton("Senere", null)
                 .show();
+    }
+
+    private void downloadApk() {
+        toast("Laster ned ny versjon…");
+        new Thread(() -> {
+            try {
+                File f = new File(new File(getCacheDir(), "apk"), "flytteprotokoll.apk");
+                Updater.downloadTo(Updater.BASE + "flytteprotokoll.apk", f);
+                runOnUiThread(() -> installApk(f));
+            } catch (Exception e) {
+                toast("Nedlastingen feilet. Prøv igjen senere.");
+            }
+        }).start();
+    }
+
+    /** Opens the system installer. The first time, Android asks to allow installs from this app. */
+    private void installApk(File f) {
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            pendingApk = f;
+            Toast.makeText(this, "Tillat installasjon fra Flytteprotokoll, og gå tilbake", Toast.LENGTH_LONG).show();
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName())));
+            } catch (ActivityNotFoundException e) {
+                pendingApk = null;
+            }
+            return;
+        }
+        pendingApk = null;
+        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
+        Intent i = new Intent(Intent.ACTION_VIEW);
+        i.setDataAndType(uri, "application/vnd.android.package-archive");
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(i);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Kunne ikke åpne installasjonen", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (pendingApk != null && getPackageManager().canRequestPackageInstalls()) installApk(pendingApk);
+        if (webView != null) {
+            reloadIfIdle();
+            checkForUpdate(false);
+        }
     }
 
     /* ---------- saving and sharing files ---------- */
@@ -263,7 +303,13 @@ public class MainActivity extends Activity {
     private class Bridge {
         @JavascriptInterface
         public String getVersion() {
-            return BuildConfig.VERSION_NAME;
+            return BuildConfig.VERSION_NAME + " (innhold " + updater.contentVersion() + ")";
+        }
+
+        /** The page calls this when it goes back to the protocol list, a safe moment to apply new content. */
+        @JavascriptInterface
+        public void onIdle() {
+            runOnUiThread(MainActivity.this::reloadIfIdle);
         }
 
         @JavascriptInterface

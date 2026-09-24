@@ -34,10 +34,20 @@ jobs:
           ./gradlew --no-daemon assembleRelease
           cp app/build/outputs/apk/release/app-release.apk ../flytteprotokoll.apk
 
+      # The same web files, for silent content updates of installed apps.
+      - name: Package web content
+        run: |
+          zip -qr web.zip index.html app.css manifest.json icons vendor
+          echo "{\"version\": $VERSION_CODE, \"shell\": $(cat android/shell-version.txt)}" > web.json
+          cat web.json
+
       - uses: actions/upload-artifact@v4
         with:
           name: flytteprotokoll-apk
-          path: flytteprotokoll.apk
+          path: |
+            flytteprotokoll.apk
+            web.zip
+            web.json
 
       # Each build on the default branch becomes a GitHub Release, so the newest APK is always at
       # https://github.com/<owner>/<repo>/releases/latest/download/flytteprotokoll.apk
@@ -46,6 +56,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v2.0.$VERSION_CODE" flytteprotokoll.apk \
+          gh release create "v2.0.$VERSION_CODE" flytteprotokoll.apk web.zip web.json \
             --title "Flytteprotokoll 2.0.$VERSION_CODE" \
             --notes "Android-bygg av commit ${{ github.sha }}. Last ned flytteprotokoll.apk og åpne filen på telefonen for å installere eller oppdatere."

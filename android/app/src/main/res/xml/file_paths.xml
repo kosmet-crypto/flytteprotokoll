@@ -2,4 +2,5 @@
 <paths>
     <cache-path name="camera" path="camera/" />
     <cache-path name="shared" path="shared/" />
+    <cache-path name="apk" path="apk/" />
 </paths>
