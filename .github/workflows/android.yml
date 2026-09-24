@@ -23,6 +23,10 @@ jobs:
 
       # The Ubuntu runner ships the Android SDK (ANDROID_HOME); Gradle fetches any missing platform.
 
+      # Run number + 100 keeps versions above the builds from the repository's earlier history.
+      - name: Set version
+        run: echo "VERSION_CODE=$((GITHUB_RUN_NUMBER + 100))" >> "$GITHUB_ENV"
+
       - name: Build APK
         working-directory: android
         run: |
@@ -42,6 +46,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v2.0.${{ github.run_number }}" flytteprotokoll.apk \
-            --title "Flytteprotokoll 2.0.${{ github.run_number }}" \
+          gh release create "v2.0.$VERSION_CODE" flytteprotokoll.apk \
+            --title "Flytteprotokoll 2.0.$VERSION_CODE" \
             --notes "Android-bygg av commit ${{ github.sha }}. Last ned flytteprotokoll.apk og åpne filen på telefonen for å installere eller oppdatere."
