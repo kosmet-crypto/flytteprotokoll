@@ -1,6 +1,6 @@
 /* Flytteprotokoll service worker: gjør appen tilgjengelig uten nett.
    Øk VERSION når index.html, app.css, vendor/ eller ikonene endres. */
-const VERSION = 'fp-v5';
+const VERSION = 'fp-v6';
 const SHELL = [
   './',
   './index.html',

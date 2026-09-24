@@ -235,7 +235,7 @@ public class MainActivity extends Activity {
     }
 
     /** Writes the PDF to the cache and opens the Android share sheet (e-post, Teams, Drive…). */
-    private void share(String name, byte[] bytes) {
+    private void share(String name, byte[] bytes, String subject, String text) {
         try {
             File dir = new File(getCacheDir(), "shared");
             dir.mkdirs();
@@ -249,7 +249,8 @@ public class MainActivity extends Activity {
             Intent i = new Intent(Intent.ACTION_SEND);
             i.setType("application/pdf");
             i.putExtra(Intent.EXTRA_STREAM, uri);
-            i.putExtra(Intent.EXTRA_SUBJECT, name.replace(".pdf", "").replace('_', ' '));
+            i.putExtra(Intent.EXTRA_SUBJECT, subject != null && !subject.isEmpty() ? subject : name.replace(".pdf", "").replace('_', ' '));
+            if (text != null && !text.isEmpty()) i.putExtra(Intent.EXTRA_TEXT, text);
             i.setClipData(ClipData.newRawUri(name, uri));
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             startActivity(Intent.createChooser(i, "Del protokoll"));
@@ -284,9 +285,9 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void sharePdf(final String name, final String base64) {
+        public void sharePdf(final String name, final String base64, final String subject, final String text) {
             final byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
-            runOnUiThread(() -> share(name, bytes));
+            runOnUiThread(() -> share(name, bytes, subject, text));
         }
     }
 

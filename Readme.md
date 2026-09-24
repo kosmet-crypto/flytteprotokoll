@@ -14,6 +14,12 @@ Alt lagres **bare på enheten** (IndexedDB), ingenting sendes til noen server.
 * Innstillinger: navn, tittel, enhet, faste adresser, logo, valgfri PIN, egen erklæringstekst, sikkerhetskopi (eksport/import).
 * **Resten OK**: sett alle punkter uten status til OK med ett trykk (per rom eller for hele protokollen).
 * Oppstartsveiviser første gang: navn, enhet, faste adresser, logo og PIN, eller hent alt fra en sikkerhetskopi.
+* **Signert og låst**: når PDF-en lages, låses protokollen. Feil rettes med en *korrigert kopi* som viser hvilken protokoll den erstatter.
+* **Prisliste**: egne priser per skade og per manglende nøkkel fylles inn automatisk ved erstatningskrav.
+* **Del PDF** med ferdig e-postemne og -tekst (redigeres under Innstillinger).
+* **Frist for krav** (14 dager) vises på utflyttinger i listen og i PDF-en.
+* **Per adresse**: listen kan grupperes per adresse og leilighet, og søket finner adresse, leil.nr, navn og dato.
+* Avvik som allerede var registrert ved innflytting kan merkes **Kjent fra innflytting – ikke krav**.
 * Virker uten nett.
 
 ## Nettversjon
