@@ -235,15 +235,18 @@ public class MainActivity extends Activity {
             return;
         }
         pendingApk = null;
-        Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".files", f);
-        Intent i = new Intent(Intent.ACTION_VIEW);
-        i.setDataAndType(uri, "application/vnd.android.package-archive");
-        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        try {
-            startActivity(i);
-        } catch (ActivityNotFoundException e) {
-            Toast.makeText(this, "Kunne ikke åpne installasjonen", Toast.LENGTH_LONG).show();
+        if (Build.VERSION.SDK_INT < 31) {
+            QuietInstall.openScreen(this, f);
+            return;
         }
+        // Android 12+: try without the install screen; QuietInstall falls back to it if refused.
+        new Thread(() -> {
+            try {
+                QuietInstall.start(this, f);
+            } catch (Exception e) {
+                runOnUiThread(() -> QuietInstall.openScreen(this, f));
+            }
+        }).start();
     }
 
     @Override
